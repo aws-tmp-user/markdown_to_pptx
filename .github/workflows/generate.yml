@@ -1,0 +1,103 @@
+name: generate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  narration:
+    name: Export narration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install python-pptx
+        run: pip install python-pptx
+
+      - name: Export narration
+        run: python src/generate.py slide.md --export-narration
+
+      - name: Upload narration
+        uses: actions/upload-artifact@v7
+        with:
+          name: narration
+          path: src/narration
+
+  synthesize:
+    name: Synthesize audio
+    needs: narration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install piper-tts
+        run: pip install piper-tts pyopenjtalk
+
+      - name: Download Piper voice
+        run: python -m piper.download_voices --download-dir src/voices ja_JA-hi_fi_captain-medium
+
+      - name: Download narration
+        uses: actions/download-artifact@v8
+        with:
+          name: narration
+          path: src/narration
+
+      - name: Synthesize narration audio
+        run: python src/tts.py
+
+      - name: Upload audio
+        uses: actions/upload-artifact@v7
+        with:
+          name: audio
+          path: src/audio
+
+  build:
+    name: Build & commit
+    needs: synthesize
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install python-pptx
+        run: pip install python-pptx
+
+      - name: Download audio
+        uses: actions/download-artifact@v8
+        with:
+          name: audio
+          path: src/audio
+
+      - name: Build slide.pptx
+        run: python src/generate.py slide.md
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit changes
+        id: commit
+        run: |
+          git add slide.pptx src/audio
+          git diff --cached --quiet && echo "changed=false" >> "$GITHUB_OUTPUT" || {
+            git commit -m "Regenerate slide.pptx"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          }
+
+      - name: Push changes
+        if: steps.commit.outputs.changed == 'true'
+        run: git push
